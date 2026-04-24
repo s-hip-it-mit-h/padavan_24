@@ -19,27 +19,18 @@ jobs:
 
     - name: Get variables
       run: |
-        # Удаляем символы возврата каретки (CR) из файлов, если они есть
         sed -i 's/\r$//' variables
         sed -i 's/\r$//' build.config
-        
-        # Создаем временный файл, объединяя переменные из variables и build.config
         cat variables build.config > /tmp/vars.env
-        
-        # Загружаем переменные из временного файла
         set -a
         . /tmp/vars.env
         set +a
-        
-        # Подготавливаем PADAVAN_THEMES для экспорта
         PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
-        
-        # Экспортируем все переменные, начинающиеся с PADAVAN_ и CONFIG_, в GITHUB_ENV
         for v in $(compgen -v | grep -E '^(PADAVAN_|CONFIG_)'); do
           echo "$v=${!v}" >> $GITHUB_ENV
         done
 
-    - name: Download sources and toolchain
+    - name: Download sources
       run: |
         git config --global --add safe.directory '*'
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" padavan-ng
@@ -47,14 +38,12 @@ jobs:
         if [ -n "$PADAVAN_COMMIT" ]; then
           git checkout "$PADAVAN_COMMIT"
         fi
-        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C . --zstd -xf -
 
     - name: Install themes
       run: |
         if [[ -n $PADAVAN_THEMES ]]; then
           git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
           cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
-
           for theme in $PADAVAN_THEMES; do
             echo "Installing $theme theme"
             cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
@@ -69,15 +58,10 @@ jobs:
 
     - name: Build firmware
       run: |
-        # Копируем конфиг сборки
         cp build.config padavan-ng/trunk/.config
         cd padavan-ng/trunk
-        
-        # Очищаем и собираем
         ./clear_tree.sh
         ./build_firmware.sh
-        
-        # Находим собранный файл прошивки
         FW_FILE_NAME=$(find images -type f \( -name "*.trx" -o -name "*.bin" \) -printf "%T@ %f\n" | sort -n | tail -1 | cut -d' ' -f2-)
         if [ -z "$FW_FILE_NAME" ]; then
           echo "Firmware file not found"
@@ -113,10 +97,8 @@ jobs:
           echo "Skipping size check."
           exit 0
         fi
-        
         max_fw_size=$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")
         fw_size=$(stat -c %s "$FW_FILE_NAME")
-        
         if (( fw_size > max_fw_size )); then
           fw_size_fmtd=$(numfmt --grouping "$fw_size")
           max_fw_size_fmtd=$(numfmt --grouping "$max_fw_size")
