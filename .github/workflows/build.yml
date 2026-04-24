@@ -30,48 +30,21 @@ jobs:
           echo "$v=${!v}" >> $GITHUB_ENV
         done
 
-    - name: Find toolchain in container
+    - name: Inspect container (debug)
       run: |
-        echo "=== Ищем toolchain в контейнере ==="
-        # Возможные пути, где может лежать toolchain в контейнере
-        CANDIDATES=(
-          "/opt/toolchain"
-          "/opt/padavan-ng/toolchain"
-          "/toolchain"
-          "/usr/local/toolchain"
-          "/root/toolchain"
-        )
-        
-        TOOLCHAIN_PATH=""
-        for p in "${CANDIDATES[@]}"; do
-          if [ -f "$p/out/bin/mipsel-linux-uclibc-gcc" ]; then
-            TOOLCHAIN_PATH="$p"
-            echo "✅ Найден toolchain: $p"
-            break
-          fi
-        done
-        
-        # Если не нашли по явным путям — ищем по всей ФС
-        if [ -z "$TOOLCHAIN_PATH" ]; then
-          echo "Ищем по всей файловой системе..."
-          FOUND=$(find / -name "mipsel-linux-uclibc-gcc" -type f 2>/dev/null | head -1)
-          if [ -n "$FOUND" ]; then
-            # Путь к toolchain = на 3 уровня выше (out/bin/gcc -> toolchain)
-            TOOLCHAIN_PATH=$(dirname "$(dirname "$(dirname "$FOUND")")")
-            echo "✅ Найден toolchain: $TOOLCHAIN_PATH"
-          fi
-        fi
-        
-        if [ -z "$TOOLCHAIN_PATH" ]; then
-          echo "❌ Toolchain не найден в контейнере!"
-          echo "Содержимое /opt:"
-          ls -la /opt/ || true
-          exit 1
-        fi
-        
-        echo "TOOLCHAIN_PATH=$TOOLCHAIN_PATH" >> $GITHUB_ENV
+        echo "=== Содержимое корня ==="
+        ls -la /
+        echo ""
+        echo "=== Содержимое /opt ==="
+        ls -la /opt/ 2>/dev/null || echo "/opt отсутствует"
+        echo ""
+        echo "=== Ищем mipsel-linux-uclibc-gcc ==="
+        find / -name "mipsel-linux-uclibc-gcc" -type f 2>/dev/null | head -20
+        echo ""
+        echo "=== Ищем каталоги toolchain ==="
+        find / -type d -name "toolchain" 2>/dev/null | head -20
 
-    - name: Download sources
+    - name: Download sources and setup toolchain
       run: |
         git config --global --add safe.directory '*'
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" padavan-ng
@@ -79,14 +52,31 @@ jobs:
         if [ -n "$PADAVAN_COMMIT" ]; then
           git checkout "$PADAVAN_COMMIT"
         fi
-        
-        # Создаём симлинк на toolchain в ожидаемом месте
         cd ..
-        ln -sfn "$TOOLCHAIN_PATH" padavan-ng/toolchain
+
+        echo "=== Ищем готовый toolchain в контейнере ==="
+        TOOLCHAIN_GCC=$(find / -name "mipsel-linux-uclibc-gcc" -type f -executable 2>/dev/null | head -1)
         
-        echo "=== Проверка ==="
-        ls -la padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc
-        padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc --version || true
+        if [ -n "$TOOLCHAIN_GCC" ]; then
+          # Путь к корню toolchain = на 3 уровня выше gcc (toolchain/out/bin/gcc)
+          TOOLCHAIN_ROOT=$(dirname "$(dirname "$(dirname "$TOOLCHAIN_GCC")")")
+          echo "✅ Найден toolchain: $TOOLCHAIN_ROOT"
+          
+          # Удаляем существующий каталог/симлинк если есть
+          rm -rf padavan-ng/toolchain
+          
+          # Создаём симлинк
+          ln -sfn "$TOOLCHAIN_ROOT" padavan-ng/toolchain
+          
+          echo "=== Проверка симлинка ==="
+          ls -la padavan-ng/toolchain
+          ls -la padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc
+          padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc --version
+        else
+          echo "❌ Готовый toolchain в контейнере не найден!"
+          echo "Необходимо собрать его вручную из исходников (долго)."
+          exit 1
+        fi
 
     - name: Install themes
       run: |
@@ -143,7 +133,6 @@ jobs:
         partitions="padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config"
         if [ ! -f "$partitions" ]; then
           echo "Partitions file not found: $partitions"
-          echo "Skipping size check."
           exit 0
         fi
         max_fw_size=$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")
@@ -151,7 +140,7 @@ jobs:
         if (( fw_size > max_fw_size )); then
           fw_size_fmtd=$(numfmt --grouping "$fw_size")
           max_fw_size_fmtd=$(numfmt --grouping "$max_fw_size")
-          echo "Firmware size ($fw_size_fmtd bytes) exceeds max size ($max_fw_size_fmtd bytes) for your target device"
+          echo "Firmware size ($fw_size_fmtd bytes) exceeds max size ($max_fw_size_fmtd bytes)"
           exit 1
         else
           echo "Firmware size ($fw_size bytes) is within the limit ($max_fw_size bytes)."
