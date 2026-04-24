@@ -30,21 +30,7 @@ jobs:
           echo "$v=${!v}" >> $GITHUB_ENV
         done
 
-    - name: Inspect container (debug)
-      run: |
-        echo "=== Содержимое корня ==="
-        ls -la /
-        echo ""
-        echo "=== Содержимое /opt ==="
-        ls -la /opt/ 2>/dev/null || echo "/opt отсутствует"
-        echo ""
-        echo "=== Ищем mipsel-linux-uclibc-gcc ==="
-        find / -name "mipsel-linux-uclibc-gcc" -type f 2>/dev/null | head -20
-        echo ""
-        echo "=== Ищем каталоги toolchain ==="
-        find / -type d -name "toolchain" 2>/dev/null | head -20
-
-    - name: Download sources and setup toolchain
+    - name: Download sources
       run: |
         git config --global --add safe.directory '*'
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" padavan-ng
@@ -52,31 +38,46 @@ jobs:
         if [ -n "$PADAVAN_COMMIT" ]; then
           git checkout "$PADAVAN_COMMIT"
         fi
-        cd ..
 
-        echo "=== Ищем готовый toolchain в контейнере ==="
-        TOOLCHAIN_GCC=$(find / -name "mipsel-linux-uclibc-gcc" -type f -executable 2>/dev/null | head -1)
-        
-        if [ -n "$TOOLCHAIN_GCC" ]; then
-          # Путь к корню toolchain = на 3 уровня выше gcc (toolchain/out/bin/gcc)
-          TOOLCHAIN_ROOT=$(dirname "$(dirname "$(dirname "$TOOLCHAIN_GCC")")")
-          echo "✅ Найден toolchain: $TOOLCHAIN_ROOT"
-          
-          # Удаляем существующий каталог/симлинк если есть
-          rm -rf padavan-ng/toolchain
-          
-          # Создаём симлинк
-          ln -sfn "$TOOLCHAIN_ROOT" padavan-ng/toolchain
-          
-          echo "=== Проверка симлинка ==="
-          ls -la padavan-ng/toolchain
-          ls -la padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc
-          padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc --version
-        else
-          echo "❌ Готовый toolchain в контейнере не найден!"
-          echo "Необходимо собрать его вручную из исходников (долго)."
+    - name: Compute toolchain cache key
+      id: tc_key
+      run: |
+        # Хеш файлов toolchain'а — если они меняются, пересобираем
+        HASH=$(find padavan-ng/toolchain -type f \
+               \( -name "*.sh" -o -name "*.config" -o -name "config.*" -o -name "Makefile*" \) \
+               -exec sha1sum {} \; 2>/dev/null | sort | sha1sum | awk '{print $1}')
+        echo "hash=$HASH" >> $GITHUB_OUTPUT
+        echo "Toolchain hash: $HASH"
+
+    - name: Restore toolchain cache
+      id: cache-toolchain
+      uses: actions/cache@v4
+      with:
+        path: padavan-ng/toolchain/out
+        key: padavan-toolchain-${{ steps.tc_key.outputs.hash }}
+        restore-keys: |
+          padavan-toolchain-
+
+    - name: Build toolchain (if cache miss)
+      if: steps.cache-toolchain.outputs.cache-hit != 'true'
+      run: |
+        echo "=== Кеш toolchain не найден, собираем с нуля ==="
+        cd padavan-ng/toolchain
+        ./clean_sources.sh || true
+        ./build_toolchain.sh
+        echo "=== Toolchain собран ==="
+        ls -la out/bin/ | head -20
+
+    - name: Verify toolchain
+      run: |
+        GCC=padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc
+        if [ ! -f "$GCC" ]; then
+          echo "❌ Toolchain не найден после сборки/восстановления из кеша!"
+          ls -la padavan-ng/toolchain/out/ 2>/dev/null || true
           exit 1
         fi
+        "$GCC" --version
+        echo "✅ Toolchain готов"
 
     - name: Install themes
       run: |
