@@ -1,7 +1,6 @@
 PADAVAN_REPO="https://gitlab.com/hadzhioglu/padavan-ng"
 PADAVAN_BRANCH="master"
 PADAVAN_COMMIT="0e6caa27"
-PADAVAN_TOOLCHAIN_URL="https://github.com/MeIsReallyBa/padavan-4.4/releases/download/toolchain/toolchain-4.4.x.tar.zst"
 PADAVAN_THEMES_REPO="https://github.com/shvchk/padavan-themes.git"
 PADAVAN_THEMES_BRANCH="main"
 PADAVAN_THEMES=(
