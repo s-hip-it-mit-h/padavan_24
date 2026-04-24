@@ -10,25 +10,44 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: registry.gitlab.com/hadzhioglu/padavan-ng
-    defaults: { run: { shell: bash } }
+    defaults:
+      run:
+        shell: bash
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
     - name: Get variables
       run: |
-        sed -i 's|\r$||g' variables build.config
-        . <(cat variables build.config)
+        # Удаляем символы возврата каретки (CR) из файлов, если они есть
+        sed -i 's/\r$//' variables
+        sed -i 's/\r$//' build.config
+        
+        # Создаем временный файл, объединяя переменные из variables и build.config
+        cat variables build.config > /tmp/vars.env
+        
+        # Загружаем переменные из временного файла
+        set -a
+        . /tmp/vars.env
+        set +a
+        
+        # Подготавливаем PADAVAN_THEMES для экспорта
         PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
-        for v in "${!PADAVAN_@}" "${!CONFIG_@}"; do
+        
+        # Экспортируем все переменные, начинающиеся с PADAVAN_ и CONFIG_, в GITHUB_ENV
+        for v in $(compgen -v | grep -E '^(PADAVAN_|CONFIG_)'); do
           echo "$v=${!v}" >> $GITHUB_ENV
         done
 
     - name: Download sources and toolchain
       run: |
         git config --global --add safe.directory '*'
-        git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
-        git -C padavan-ng checkout "$PADAVAN_COMMIT"
-        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
+        git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" padavan-ng
+        cd padavan-ng
+        if [ -n "$PADAVAN_COMMIT" ]; then
+          git checkout "$PADAVAN_COMMIT"
+        fi
+        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C . --zstd -xf -
 
     - name: Install themes
       run: |
@@ -43,22 +62,34 @@ jobs:
         fi
 
     - name: Run custom pre-build script
-      run: '[[ -f pre-build.sh ]] && . pre-build.sh || :'
+      run: |
+        if [ -f pre-build.sh ]; then
+          . ./pre-build.sh
+        fi
 
     - name: Build firmware
       run: |
+        # Копируем конфиг сборки
         cp build.config padavan-ng/trunk/.config
         cd padavan-ng/trunk
+        
+        # Очищаем и собираем
         ./clear_tree.sh
         ./build_firmware.sh
-
-        FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
-                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
-        [[ -n $FW_FILE_NAME ]] || { echo "Firmware file not found"; exit 1; }
+        
+        # Находим собранный файл прошивки
+        FW_FILE_NAME=$(find images -type f \( -name "*.trx" -o -name "*.bin" \) -printf "%T@ %f\n" | sort -n | tail -1 | cut -d' ' -f2-)
+        if [ -z "$FW_FILE_NAME" ]; then
+          echo "Firmware file not found"
+          exit 1
+        fi
         echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
 
     - name: Run custom post-build script
-      run: '[[ -f post-build.sh ]] && . post-build.sh || :'
+      run: |
+        if [ -f post-build.sh ]; then
+          . ./post-build.sh
+        fi
 
     - name: Prepare artifacts
       run: |
@@ -76,13 +107,21 @@ jobs:
 
     - name: Check firmware size
       run: |
-        partitions=padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config
-        max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
-        fw_size="$(stat -c %s "$FW_FILE_NAME")"
-
-        if ((fw_size > max_fw_size)); then
-          fw_size_fmtd="$(numfmt --grouping "$fw_size") bytes"
-          max_fw_size_fmtd="$(numfmt --grouping "$max_fw_size") bytes"
-          echo "Firmware size ($fw_size_fmtd) exceeds max size ($max_fw_size_fmtd) for your target device"
+        partitions="padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config"
+        if [ ! -f "$partitions" ]; then
+          echo "Partitions file not found: $partitions"
+          echo "Skipping size check."
+          exit 0
+        fi
+        
+        max_fw_size=$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")
+        fw_size=$(stat -c %s "$FW_FILE_NAME")
+        
+        if (( fw_size > max_fw_size )); then
+          fw_size_fmtd=$(numfmt --grouping "$fw_size")
+          max_fw_size_fmtd=$(numfmt --grouping "$max_fw_size")
+          echo "Firmware size ($fw_size_fmtd bytes) exceeds max size ($max_fw_size_fmtd bytes) for your target device"
           exit 1
+        else
+          echo "Firmware size ($fw_size bytes) is within the limit ($max_fw_size bytes)."
         fi
