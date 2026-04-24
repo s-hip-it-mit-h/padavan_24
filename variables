@@ -1,10 +1,8 @@
-PADAVAN_REPO="https://gitlab.com/hadzhioglu/padavan-ng.git"
-PADAVAN_BRANCH="master"
-PADAVAN_COMMIT="HEAD"
-PADAVAN_TOOLCHAIN_URL="https://gitlab.com/api/v4/projects/hadzhioglu%2Fpadavan-ng/packages/generic/toolchain/latest/toolchain.tzst"
-
-PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes.git"
-#PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes-lite.git"
+PADAVAN_REPO="https://github.com/psa-jforest/padavan-ng-3.4"
+PADAVAN_BRANCH="main"
+PADAVAN_COMMIT=""
+PADAVAN_TOOLCHAIN_URL="https://github.com/psa-jforest/padavan-ng-3.4/releases/download/toolchain/toolchain-3.4.x.tar.xz"
+PADAVAN_THEMES_REPO="https://github.com/shvchk/padavan-themes.git"
 PADAVAN_THEMES_BRANCH="main"
 
 PADAVAN_THEMES=(
