@@ -30,7 +30,48 @@ jobs:
           echo "$v=${!v}" >> $GITHUB_ENV
         done
 
-    - name: Download sources and toolchain
+    - name: Find toolchain in container
+      run: |
+        echo "=== Ищем toolchain в контейнере ==="
+        # Возможные пути, где может лежать toolchain в контейнере
+        CANDIDATES=(
+          "/opt/toolchain"
+          "/opt/padavan-ng/toolchain"
+          "/toolchain"
+          "/usr/local/toolchain"
+          "/root/toolchain"
+        )
+        
+        TOOLCHAIN_PATH=""
+        for p in "${CANDIDATES[@]}"; do
+          if [ -f "$p/out/bin/mipsel-linux-uclibc-gcc" ]; then
+            TOOLCHAIN_PATH="$p"
+            echo "✅ Найден toolchain: $p"
+            break
+          fi
+        done
+        
+        # Если не нашли по явным путям — ищем по всей ФС
+        if [ -z "$TOOLCHAIN_PATH" ]; then
+          echo "Ищем по всей файловой системе..."
+          FOUND=$(find / -name "mipsel-linux-uclibc-gcc" -type f 2>/dev/null | head -1)
+          if [ -n "$FOUND" ]; then
+            # Путь к toolchain = на 3 уровня выше (out/bin/gcc -> toolchain)
+            TOOLCHAIN_PATH=$(dirname "$(dirname "$(dirname "$FOUND")")")
+            echo "✅ Найден toolchain: $TOOLCHAIN_PATH"
+          fi
+        fi
+        
+        if [ -z "$TOOLCHAIN_PATH" ]; then
+          echo "❌ Toolchain не найден в контейнере!"
+          echo "Содержимое /opt:"
+          ls -la /opt/ || true
+          exit 1
+        fi
+        
+        echo "TOOLCHAIN_PATH=$TOOLCHAIN_PATH" >> $GITHUB_ENV
+
+    - name: Download sources
       run: |
         git config --global --add safe.directory '*'
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" padavan-ng
@@ -38,40 +79,14 @@ jobs:
         if [ -n "$PADAVAN_COMMIT" ]; then
           git checkout "$PADAVAN_COMMIT"
         fi
-
-        echo "=== Скачиваем toolchain ==="
-        for i in 1 2 3 4 5; do
-          echo "Попытка $i..."
-          if wget --tries=2 --timeout=60 --retry-connrefused \
-                  -O /tmp/toolchain.tzst "$PADAVAN_TOOLCHAIN_URL"; then
-            # Проверяем целостность архива
-            if zstd -t /tmp/toolchain.tzst 2>/dev/null; then
-              echo "✅ Архив скачан и валиден"
-              break
-            else
-              echo "❌ Архив повреждён, повторяем..."
-              rm -f /tmp/toolchain.tzst
-            fi
-          fi
-          if [ $i -eq 5 ]; then
-            echo "❌ Не удалось скачать toolchain после 5 попыток"
-            exit 1
-          fi
-          sleep 10
-        done
-
-        echo "=== Распаковываем toolchain ==="
-        tar -C . --zstd -xf /tmp/toolchain.tzst
-        rm -f /tmp/toolchain.tzst
-
-        echo "=== Проверяем наличие toolchain ==="
-        if [ ! -f toolchain/out/bin/mipsel-linux-uclibc-gcc ]; then
-          echo "❌ Toolchain не найден по ожидаемому пути!"
-          ls -la toolchain/ || true
-          ls -la toolchain/out/ || true
-          exit 1
-        fi
-        echo "✅ Toolchain на месте"
+        
+        # Создаём симлинк на toolchain в ожидаемом месте
+        cd ..
+        ln -sfn "$TOOLCHAIN_PATH" padavan-ng/toolchain
+        
+        echo "=== Проверка ==="
+        ls -la padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc
+        padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc --version || true
 
     - name: Install themes
       run: |
