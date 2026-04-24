@@ -30,7 +30,7 @@ jobs:
           echo "$v=${!v}" >> $GITHUB_ENV
         done
 
-    - name: Download sources
+    - name: Download sources and toolchain
       run: |
         git config --global --add safe.directory '*'
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" padavan-ng
@@ -38,6 +38,40 @@ jobs:
         if [ -n "$PADAVAN_COMMIT" ]; then
           git checkout "$PADAVAN_COMMIT"
         fi
+
+        echo "=== Скачиваем toolchain ==="
+        for i in 1 2 3 4 5; do
+          echo "Попытка $i..."
+          if wget --tries=2 --timeout=60 --retry-connrefused \
+                  -O /tmp/toolchain.tzst "$PADAVAN_TOOLCHAIN_URL"; then
+            # Проверяем целостность архива
+            if zstd -t /tmp/toolchain.tzst 2>/dev/null; then
+              echo "✅ Архив скачан и валиден"
+              break
+            else
+              echo "❌ Архив повреждён, повторяем..."
+              rm -f /tmp/toolchain.tzst
+            fi
+          fi
+          if [ $i -eq 5 ]; then
+            echo "❌ Не удалось скачать toolchain после 5 попыток"
+            exit 1
+          fi
+          sleep 10
+        done
+
+        echo "=== Распаковываем toolchain ==="
+        tar -C . --zstd -xf /tmp/toolchain.tzst
+        rm -f /tmp/toolchain.tzst
+
+        echo "=== Проверяем наличие toolchain ==="
+        if [ ! -f toolchain/out/bin/mipsel-linux-uclibc-gcc ]; then
+          echo "❌ Toolchain не найден по ожидаемому пути!"
+          ls -la toolchain/ || true
+          ls -la toolchain/out/ || true
+          exit 1
+        fi
+        echo "✅ Toolchain на месте"
 
     - name: Install themes
       run: |
