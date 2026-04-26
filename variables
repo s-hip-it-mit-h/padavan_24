@@ -1,4 +1,4 @@
-PADAVAN_REPO="https://gitlab.com/hadzhioglu/padavan-ng"
+PADAVAN_REPO="https://github.com/MeIsReallyBa/padavan-4.4"
 PADAVAN_BRANCH="master"
 PADAVAN_COMMIT="0e6caa27"
 PADAVAN_THEMES_REPO="https://github.com/shvchk/padavan-themes.git"
